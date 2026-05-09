@@ -1,4 +1,0 @@
-flask
-pillow
-gunicorn
-werkzeug
