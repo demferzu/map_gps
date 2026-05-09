@@ -1,4 +1,5 @@
 from flask import Flask, render_template_string, request, redirect
+from flask import send_from_directory
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 import os
@@ -267,16 +268,10 @@ def upload():
 @app.route("/uploads/<filename>")
 def uploads(filename):
 
-    ruta = os.path.join(
+    return send_from_directory(
         UPLOAD_FOLDER,
         filename
     )
-
-    with open(ruta, "rb") as f:
-
-        return f.read(), 200, {
-            "Content-Type": "image/jpeg"
-        }
 
 
 # =========================
