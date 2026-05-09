@@ -1,15 +1,41 @@
-from flask import Flask, render_template_string, request, redirect
-from flask import send_from_directory
+from flask import (
+    Flask,
+    render_template_string,
+    request,
+    redirect,
+    send_from_directory
+)
+
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
+
+from werkzeug.utils import secure_filename
+
+import sqlite3
 import os
 import json
-from werkzeug.utils import secure_filename
-import sqlite3
+
+
+# =====================================
+# CONFIG
+# =====================================
+
+app = Flask(__name__)
+
+UPLOAD_FOLDER = "uploads"
+DB_NAME = "mapa.db"
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+
+# =====================================
+# DATABASE
+# =====================================
 
 def iniciar_db():
 
-    conn = sqlite3.connect("mapa.db")
+    conn = sqlite3.connect(DB_NAME)
 
     cursor = conn.cursor()
 
@@ -19,7 +45,7 @@ def iniciar_db():
 
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-            nombre TEXT,
+            nombre TEXT UNIQUE,
             lat REAL,
             lon REAL
 
@@ -28,21 +54,15 @@ def iniciar_db():
     """)
 
     conn.commit()
-
     conn.close()
 
-app = Flask(__name__)
+
 iniciar_db()
 
-UPLOAD_FOLDER = "uploads"
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-
-
-# =========================
+# =====================================
 # GPS FUNCTIONS
-# =========================
+# =====================================
 
 def convertir_coordenadas(valor):
 
@@ -58,6 +78,9 @@ def obtener_gps(imagen_path):
     try:
 
         imagen = Image.open(imagen_path)
+
+        # Reduce RAM
+        imagen.thumbnail((1200, 1200))
 
         exif = imagen._getexif()
 
@@ -108,38 +131,62 @@ def obtener_gps(imagen_path):
         return None
 
 
-# =========================
-# LOAD PHOTOS
-# =========================
+# =====================================
+# DATABASE FUNCTIONS
+# =====================================
 
-def cargar_fotos():
+def guardar_foto_db(nombre, lat, lon):
+
+    conn = sqlite3.connect(DB_NAME)
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO fotos
+        (nombre, lat, lon)
+        VALUES (?, ?, ?)
+        """,
+        (nombre, lat, lon)
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def cargar_fotos_db():
+
+    conn = sqlite3.connect(DB_NAME)
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT nombre, lat, lon
+        FROM fotos
+        """
+    )
+
+    datos = cursor.fetchall()
+
+    conn.close()
 
     resultados = []
 
-    archivos = os.listdir(UPLOAD_FOLDER)
+    for fila in datos:
 
-    for archivo in archivos:
-
-        if archivo.lower().endswith((".jpg", ".jpeg", ".png")):
-
-            ruta = os.path.join(UPLOAD_FOLDER, archivo)
-
-            gps = obtener_gps(ruta)
-
-            if gps:
-
-                resultados.append({
-                    "nombre": archivo,
-                    "lat": gps["lat"],
-                    "lon": gps["lon"]
-                })
+        resultados.append({
+            "nombre": fila[0],
+            "lat": fila[1],
+            "lon": fila[2]
+        })
 
     return resultados
 
 
-# =========================
+# =====================================
 # HTML
-# =========================
+# =====================================
 
 HTML = """
 
@@ -150,11 +197,21 @@ HTML = """
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Mapa GPS Fotos</title>
+<title>Mapa GPS</title>
 
 <link
 rel="stylesheet"
 href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
+
+<link
+rel="stylesheet"
+href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+/>
+
+<link
+rel="stylesheet"
+href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
 />
 
 <style>
@@ -168,7 +225,7 @@ body{
 
 #map{
     width:100%;
-    height:80vh;
+    height:85vh;
 }
 
 form{
@@ -183,7 +240,7 @@ button{
 }
 
 img{
-    max-width:200px;
+    max-width:220px;
     border-radius:10px;
 }
 
@@ -193,7 +250,9 @@ img{
 
 <body>
 
-<form method="POST" action="/upload" enctype="multipart/form-data">
+<form method="POST"
+      action="/upload"
+      enctype="multipart/form-data">
 
     <input
         type="file"
@@ -212,34 +271,56 @@ img{
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
 <script>
 
 const fotos = {{ fotos|safe }};
 
-let mapa = L.map('map').setView([-33.44, -70.65], 11);
+let mapa = L.map('map').setView(
+    [-33.44, -70.65],
+    11
+);
 
 L.tileLayer(
     'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     {
-        maxZoom:19
+        maxZoom: 19
     }
 ).addTo(mapa);
+
+
+// =====================================
+// MARKER CLUSTER
+// =====================================
+
+let cluster = L.markerClusterGroup();
+
+
+// =====================================
+// ADD MARKERS
+// =====================================
 
 for(let foto of fotos){
 
     let marcador = L.marker(
         [foto.lat, foto.lon]
-    ).addTo(mapa);
+    );
 
     marcador.bindPopup(
         `
         <b>${foto.nombre}</b>
+
         <br><br>
 
         <img src="/uploads/${foto.nombre}">
         `
     );
+
+    cluster.addLayer(marcador);
 }
+
+mapa.addLayer(cluster);
 
 </script>
 
@@ -249,14 +330,14 @@ for(let foto of fotos){
 """
 
 
-# =========================
+# =====================================
 # ROUTES
-# =========================
+# =====================================
 
 @app.route("/")
 def inicio():
 
-    fotos = cargar_fotos()
+    fotos = cargar_fotos_db()
 
     return render_template_string(
         HTML,
@@ -271,6 +352,10 @@ def upload():
         return redirect("/")
 
     archivos = request.files.getlist("fotos")
+
+    # Limita cantidad
+    if len(archivos) > 20:
+        return "Máximo 20 fotos"
 
     for archivo in archivos:
 
@@ -288,6 +373,16 @@ def upload():
 
         archivo.save(ruta)
 
+        gps = obtener_gps(ruta)
+
+        if gps:
+
+            guardar_foto_db(
+                nombre,
+                gps["lat"],
+                gps["lon"]
+            )
+
     return redirect("/")
 
 
@@ -300,9 +395,9 @@ def uploads(filename):
     )
 
 
-# =========================
+# =====================================
 # START
-# =========================
+# =====================================
 
 if __name__ == "__main__":
 
