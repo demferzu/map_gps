@@ -5,8 +5,34 @@ from PIL.ExifTags import TAGS, GPSTAGS
 import os
 import json
 from werkzeug.utils import secure_filename
+import sqlite3
+
+def iniciar_db():
+
+    conn = sqlite3.connect("mapa.db")
+
+    cursor = conn.cursor()
+
+    cursor.execute("""
+
+        CREATE TABLE IF NOT EXISTS fotos (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            nombre TEXT,
+            lat REAL,
+            lon REAL
+
+        )
+
+    """)
+
+    conn.commit()
+
+    conn.close()
 
 app = Flask(__name__)
+iniciar_db()
 
 UPLOAD_FOLDER = "uploads"
 
