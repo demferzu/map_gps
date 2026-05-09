@@ -168,10 +168,15 @@ img{
 
 <form method="POST" action="/upload" enctype="multipart/form-data">
 
-    <input type="file" name="foto">
+    <input
+        type="file"
+        name="fotos"
+        multiple
+        accept=".jpg,.jpeg,.png"
+    >
 
     <button type="submit">
-        Subir Foto
+        Subir Fotos
     </button>
 
 </form>
@@ -235,22 +240,26 @@ def inicio():
 @app.route("/upload", methods=["POST"])
 def upload():
 
-    if "foto" not in request.files:
+    if "fotos" not in request.files:
         return redirect("/")
 
-    archivo = request.files["foto"]
+    archivos = request.files.getlist("fotos")
 
-    if archivo.filename == "":
-        return redirect("/")
+    for archivo in archivos:
 
-    nombre = secure_filename(archivo.filename)
+        if archivo.filename == "":
+            continue
 
-    ruta = os.path.join(
-        UPLOAD_FOLDER,
-        nombre
-    )
+        nombre = secure_filename(
+            archivo.filename
+        )
 
-    archivo.save(ruta)
+        ruta = os.path.join(
+            UPLOAD_FOLDER,
+            nombre
+        )
+
+        archivo.save(ruta)
 
     return redirect("/")
 
