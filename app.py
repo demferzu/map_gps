@@ -2,8 +2,7 @@ from flask import (
     Flask,
     render_template_string,
     request,
-    redirect,
-    send_from_directory
+    redirect
 )
 
 from PIL import Image
@@ -14,6 +13,7 @@ from werkzeug.utils import secure_filename
 import sqlite3
 import os
 import json
+import io
 
 
 # =====================================
@@ -22,11 +22,12 @@ import json
 
 app = Flask(__name__)
 
-UPLOAD_FOLDER = "uploads"
 DB_NAME = "mapa.db"
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+TEMP_FOLDER = "temp"
+
+if not os.path.exists(TEMP_FOLDER):
+    os.makedirs(TEMP_FOLDER)
 
 
 # =====================================
@@ -46,8 +47,11 @@ def iniciar_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
 
             nombre TEXT UNIQUE,
+
             lat REAL,
-            lon REAL
+            lon REAL,
+
+            imagen BLOB
 
         )
 
@@ -78,9 +82,6 @@ def obtener_gps(imagen_path):
     try:
 
         imagen = Image.open(imagen_path)
-
-        # Reduce RAM
-        imagen.thumbnail((1200, 1200))
 
         exif = imagen._getexif()
 
@@ -132,10 +133,36 @@ def obtener_gps(imagen_path):
 
 
 # =====================================
+# IMAGE COMPRESS
+# =====================================
+
+def comprimir_imagen(ruta):
+
+    imagen = Image.open(ruta)
+
+    imagen.thumbnail((1200, 1200))
+
+    imagen.save(
+        ruta,
+        quality=70,
+        optimize=True
+    )
+
+
+# =====================================
 # DATABASE FUNCTIONS
 # =====================================
 
-def guardar_foto_db(nombre, lat, lon):
+def guardar_foto_db(
+    nombre,
+    lat,
+    lon,
+    ruta_imagen
+):
+
+    with open(ruta_imagen, "rb") as f:
+
+        imagen_binaria = f.read()
 
     conn = sqlite3.connect(DB_NAME)
 
@@ -144,10 +171,15 @@ def guardar_foto_db(nombre, lat, lon):
     cursor.execute(
         """
         INSERT OR IGNORE INTO fotos
-        (nombre, lat, lon)
-        VALUES (?, ?, ?)
+        (nombre, lat, lon, imagen)
+        VALUES (?, ?, ?, ?)
         """,
-        (nombre, lat, lon)
+        (
+            nombre,
+            lat,
+            lon,
+            imagen_binaria
+        )
     )
 
     conn.commit()
@@ -197,7 +229,7 @@ HTML = """
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Mapa GPS</title>
+<title>Mapa GPS Fotos</title>
 
 <link
 rel="stylesheet"
@@ -285,21 +317,21 @@ let mapa = L.map('map').setView(
 L.tileLayer(
     'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     {
-        maxZoom: 19
+        maxZoom:19
     }
 ).addTo(mapa);
 
 
-// =====================================
-// MARKER CLUSTER
-// =====================================
+// ============================
+// CLUSTER
+// ============================
 
 let cluster = L.markerClusterGroup();
 
 
-// =====================================
-// ADD MARKERS
-// =====================================
+// ============================
+// MARKERS
+// ============================
 
 for(let foto of fotos){
 
@@ -313,7 +345,7 @@ for(let foto of fotos){
 
         <br><br>
 
-        <img src="/uploads/${foto.nombre}">
+        <img src="/imagen/${foto.nombre}">
         `
     );
 
@@ -353,7 +385,6 @@ def upload():
 
     archivos = request.files.getlist("fotos")
 
-    # Limita cantidad
     if len(archivos) > 20:
         return "Máximo 20 fotos"
 
@@ -366,33 +397,62 @@ def upload():
             archivo.filename
         )
 
-        ruta = os.path.join(
-            UPLOAD_FOLDER,
+        ruta_temp = os.path.join(
+            TEMP_FOLDER,
             nombre
         )
 
-        archivo.save(ruta)
+        archivo.save(ruta_temp)
 
-        gps = obtener_gps(ruta)
+        # Comprimir
+        comprimir_imagen(ruta_temp)
+
+        gps = obtener_gps(ruta_temp)
 
         if gps:
 
             guardar_foto_db(
                 nombre,
                 gps["lat"],
-                gps["lon"]
+                gps["lon"],
+                ruta_temp
             )
+
+        # Elimina temporal
+        if os.path.exists(ruta_temp):
+            os.remove(ruta_temp)
 
     return redirect("/")
 
 
-@app.route("/uploads/<filename>")
-def uploads(filename):
+@app.route("/imagen/<nombre>")
+def imagen(nombre):
 
-    return send_from_directory(
-        UPLOAD_FOLDER,
-        filename
+    conn = sqlite3.connect(DB_NAME)
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT imagen
+        FROM fotos
+        WHERE nombre = ?
+        """,
+        (nombre,)
     )
+
+    dato = cursor.fetchone()
+
+    conn.close()
+
+    if not dato:
+        return "No encontrada", 404
+
+    imagen_binaria = dato[0]
+
+    return imagen_binaria, 200, {
+        "Content-Type": "image/jpeg"
+    }
 
 
 # =====================================
