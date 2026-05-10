@@ -10,9 +10,11 @@ from PIL.ExifTags import TAGS, GPSTAGS
 
 from werkzeug.utils import secure_filename
 
-import sqlite3
+from supabase import create_client
+
 import os
 import json
+import io
 
 
 # =====================================
@@ -21,109 +23,27 @@ import json
 
 app = Flask(__name__)
 
-# DB PERSISTENTE RENDER
-DB_NAME = "/var/data/mapa.db"
+SUPABASE_URL = "TU_SUPABASE_URL"
 
-TEMP_FOLDER = "temp"
+SUPABASE_KEY = "TU_SUPABASE_ANON_KEY"
+
+BUCKET = "fotos"
 
 ADMIN_PASSWORD = "1234"
+
+TEMP_FOLDER = "temp"
 
 if not os.path.exists(TEMP_FOLDER):
     os.makedirs(TEMP_FOLDER)
 
-# CREA CARPETA RENDER SI NO EXISTE
-os.makedirs("/var/data", exist_ok=True)
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
 
 
 # =====================================
-# DATABASE
-# =====================================
-
-def iniciar_db():
-
-    conn = sqlite3.connect(DB_NAME)
-
-    cursor = conn.cursor()
-
-    # =========================
-    # TABLA FOTOS
-    # =========================
-
-    cursor.execute("""
-
-        CREATE TABLE IF NOT EXISTS fotos (
-
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            nombre TEXT UNIQUE,
-
-            lat REAL,
-            lon REAL,
-
-            imagen BLOB
-
-        )
-
-    """)
-
-    # =========================
-    # CONFIG
-    # =========================
-
-    cursor.execute("""
-
-        CREATE TABLE IF NOT EXISTS config (
-
-            id INTEGER PRIMARY KEY,
-
-            uploads_habilitados INTEGER
-
-        )
-
-    """)
-
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO config
-        (id, uploads_habilitados)
-        VALUES (1, 0)
-        """
-    )
-
-    conn.commit()
-    conn.close()
-
-
-iniciar_db()
-
-
-# =====================================
-# CONFIG FUNCTIONS
-# =====================================
-
-def uploads_habilitados():
-
-    conn = sqlite3.connect(DB_NAME)
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT uploads_habilitados
-        FROM config
-        WHERE id = 1
-        """
-    )
-
-    valor = cursor.fetchone()[0]
-
-    conn.close()
-
-    return valor == 1
-
-
-# =====================================
-# GPS FUNCTIONS
+# GPS
 # =====================================
 
 def convertir_coordenadas(valor):
@@ -211,10 +131,10 @@ def comprimir_imagen(ruta):
 
 
 # =====================================
-# DATABASE FUNCTIONS
+# SUPABASE FUNCTIONS
 # =====================================
 
-def guardar_foto_db(
+def guardar_foto_supabase(
     nombre,
     lat,
     lon,
@@ -223,58 +143,60 @@ def guardar_foto_db(
 
     with open(ruta_imagen, "rb") as f:
 
-        imagen_binaria = f.read()
+        contenido = f.read()
 
-    conn = sqlite3.connect(DB_NAME)
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT OR IGNORE INTO fotos
-        (nombre, lat, lon, imagen)
-        VALUES (?, ?, ?, ?)
-        """,
-        (
-            nombre,
-            lat,
-            lon,
-            imagen_binaria
-        )
+    # SUBIR STORAGE
+    supabase.storage.from_(BUCKET).upload(
+        nombre,
+        contenido,
+        {
+            "content-type": "image/jpeg"
+        }
     )
 
-    conn.commit()
-    conn.close()
-
-
-def cargar_fotos_db():
-
-    conn = sqlite3.connect(DB_NAME)
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT nombre, lat, lon
-        FROM fotos
-        """
+    # URL PUBLICA
+    url_imagen = (
+        supabase
+        .storage
+        .from_(BUCKET)
+        .get_public_url(nombre)
     )
 
-    datos = cursor.fetchall()
+    # GUARDAR DB
+    supabase.table("fotos").insert({
 
-    conn.close()
+        "nombre": nombre,
+        "lat": lat,
+        "lon": lon,
+        "url": url_imagen
 
-    resultados = []
+    }).execute()
 
-    for fila in datos:
 
-        resultados.append({
-            "nombre": fila[0],
-            "lat": fila[1],
-            "lon": fila[2]
-        })
+def cargar_fotos():
 
-    return resultados
+    respuesta = (
+        supabase
+        .table("fotos")
+        .select("*")
+        .execute()
+    )
+
+    return respuesta.data
+
+
+def eliminar_foto(nombre):
+
+    # ELIMINAR STORAGE
+    supabase.storage.from_(BUCKET).remove([
+        nombre
+    ])
+
+    # ELIMINAR DB
+    supabase.table("fotos") \
+        .delete() \
+        .eq("nombre", nombre) \
+        .execute()
 
 
 # =====================================
@@ -338,18 +260,11 @@ img{
     border-radius:10px;
 }
 
-.info{
-    padding:10px;
-    background:#222;
-}
-
 </style>
 
 </head>
 
 <body>
-
-{% if uploads %}
 
 <form method="POST"
       action="/upload"
@@ -367,14 +282,6 @@ img{
     </button>
 
 </form>
-
-{% else %}
-
-<div class="info">
-    Uploads deshabilitados
-</div>
-
-{% endif %}
 
 <div id="map"></div>
 
@@ -422,7 +329,7 @@ for(let foto of fotos){
 
         <br><br>
 
-        <img src="/imagen/${foto.nombre}">
+        <img src="${foto.url}">
 
         <br><br>
 
@@ -456,27 +363,22 @@ mapa.addLayer(cluster);
 @app.route("/")
 def inicio():
 
-    fotos = cargar_fotos_db()
+    fotos = cargar_fotos()
 
     return render_template_string(
         HTML,
-        fotos=json.dumps(fotos),
-        uploads=uploads_habilitados()
+        fotos=json.dumps(fotos)
     )
 
 
 @app.route("/upload", methods=["POST"])
 def upload():
 
-    if not uploads_habilitados():
-        return "Uploads deshabilitados"
-
     if "fotos" not in request.files:
         return redirect("/")
 
     archivos = request.files.getlist("fotos")
 
-    # LIMITE
     if len(archivos) > 5:
         return "Máximo 5 fotos"
 
@@ -496,17 +398,17 @@ def upload():
 
         archivo.save(ruta_temp)
 
-        # GPS PRIMERO
+        # LEER GPS PRIMERO
         gps = obtener_gps(ruta_temp)
 
         if gps:
 
-            print("GPS ENCONTRADO:", nombre)
+            print("GPS:", nombre)
 
-            # COMPRIME DESPUES
+            # COMPRIMIR DESPUES
             comprimir_imagen(ruta_temp)
 
-            guardar_foto_db(
+            guardar_foto_supabase(
                 nombre,
                 gps["lat"],
                 gps["lon"],
@@ -524,36 +426,6 @@ def upload():
     return redirect("/")
 
 
-@app.route("/imagen/<nombre>")
-def imagen(nombre):
-
-    conn = sqlite3.connect(DB_NAME)
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT imagen
-        FROM fotos
-        WHERE nombre = ?
-        """,
-        (nombre,)
-    )
-
-    dato = cursor.fetchone()
-
-    conn.close()
-
-    if not dato:
-        return "No encontrada", 404
-
-    imagen_binaria = dato[0]
-
-    return imagen_binaria, 200, {
-        "Content-Type": "image/jpeg"
-    }
-
-
 @app.route("/eliminar/<nombre>")
 def eliminar(nombre):
 
@@ -562,61 +434,9 @@ def eliminar(nombre):
     if password != ADMIN_PASSWORD:
         return "Contraseña incorrecta"
 
-    conn = sqlite3.connect(DB_NAME)
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        DELETE FROM fotos
-        WHERE nombre = ?
-        """,
-        (nombre,)
-    )
-
-    conn.commit()
-    conn.close()
+    eliminar_foto(nombre)
 
     return redirect("/")
-
-
-@app.route("/toggle_uploads")
-def toggle_uploads():
-
-    password = request.args.get("password")
-
-    if password != ADMIN_PASSWORD:
-        return "Contraseña incorrecta"
-
-    conn = sqlite3.connect(DB_NAME)
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        SELECT uploads_habilitados
-        FROM config
-        WHERE id = 1
-        """
-    )
-
-    estado = cursor.fetchone()[0]
-
-    nuevo_estado = 0 if estado == 1 else 1
-
-    cursor.execute(
-        """
-        UPDATE config
-        SET uploads_habilitados = ?
-        WHERE id = 1
-        """,
-        (nuevo_estado,)
-    )
-
-    conn.commit()
-    conn.close()
-
-    return f"Uploads habilitados: {nuevo_estado}"
 
 
 # =====================================
