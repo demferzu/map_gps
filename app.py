@@ -25,7 +25,7 @@ DB_NAME = "mapa.db"
 
 TEMP_FOLDER = "temp"
 
-ADMIN_PASSWORD = "1234"
+ADMIN_PASSWORD = "@Demferzu2002"
 
 if not os.path.exists(TEMP_FOLDER):
     os.makedirs(TEMP_FOLDER)
@@ -413,7 +413,7 @@ for(let foto of fotos){
 
         <br><br>
 
-        <a href="/eliminar/${foto.nombre}?password=1234">
+        <a href="/eliminar/${foto.nombre}?password=@Demferzu2002">
 
             <button>
                 Eliminar
