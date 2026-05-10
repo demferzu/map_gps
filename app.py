@@ -21,14 +21,18 @@ import json
 
 app = Flask(__name__)
 
-DB_NAME = "mapa.db"
+# DB PERSISTENTE RENDER
+DB_NAME = "/var/data/mapa.db"
 
 TEMP_FOLDER = "temp"
 
-ADMIN_PASSWORD = "@Demferzu2002"
+ADMIN_PASSWORD = "1234"
 
 if not os.path.exists(TEMP_FOLDER):
     os.makedirs(TEMP_FOLDER)
+
+# CREA CARPETA RENDER SI NO EXISTE
+os.makedirs("/var/data", exist_ok=True)
 
 
 # =====================================
@@ -41,7 +45,10 @@ def iniciar_db():
 
     cursor = conn.cursor()
 
+    # =========================
     # TABLA FOTOS
+    # =========================
+
     cursor.execute("""
 
         CREATE TABLE IF NOT EXISTS fotos (
@@ -59,7 +66,10 @@ def iniciar_db():
 
     """)
 
-    # CONFIGURACION
+    # =========================
+    # CONFIG
+    # =========================
+
     cursor.execute("""
 
         CREATE TABLE IF NOT EXISTS config (
@@ -176,7 +186,10 @@ def obtener_gps(imagen_path):
             "lon": longitud
         }
 
-    except:
+    except Exception as e:
+
+        print("ERROR GPS:", e)
+
         return None
 
 
@@ -277,7 +290,7 @@ HTML = """
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<title>Mapa GPS Fotos</title>
+<title>Mapa GPS</title>
 
 <link
 rel="stylesheet"
@@ -413,7 +426,7 @@ for(let foto of fotos){
 
         <br><br>
 
-        <a href="/eliminar/${foto.nombre}?password=@Demferzu2002">
+        <a href="/eliminar/${foto.nombre}?password=1234">
 
             <button>
                 Eliminar
@@ -463,8 +476,9 @@ def upload():
 
     archivos = request.files.getlist("fotos")
 
-    if len(archivos) > 20:
-        return "Máximo 20 fotos"
+    # LIMITE
+    if len(archivos) > 5:
+        return "Máximo 5 fotos"
 
     for archivo in archivos:
 
@@ -482,12 +496,15 @@ def upload():
 
         archivo.save(ruta_temp)
 
-        # COMPRIME
-        comprimir_imagen(ruta_temp)
-
+        # GPS PRIMERO
         gps = obtener_gps(ruta_temp)
 
         if gps:
+
+            print("GPS ENCONTRADO:", nombre)
+
+            # COMPRIME DESPUES
+            comprimir_imagen(ruta_temp)
 
             guardar_foto_db(
                 nombre,
@@ -495,6 +512,10 @@ def upload():
                 gps["lon"],
                 ruta_temp
             )
+
+        else:
+
+            print("SIN GPS:", nombre)
 
         # ELIMINA TEMP
         if os.path.exists(ruta_temp):
