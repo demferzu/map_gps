@@ -13,7 +13,6 @@ from werkzeug.utils import secure_filename
 import sqlite3
 import os
 import json
-import io
 
 
 # =====================================
@@ -25,6 +24,8 @@ app = Flask(__name__)
 DB_NAME = "mapa.db"
 
 TEMP_FOLDER = "temp"
+
+ADMIN_PASSWORD = "1234"
 
 if not os.path.exists(TEMP_FOLDER):
     os.makedirs(TEMP_FOLDER)
@@ -40,6 +41,7 @@ def iniciar_db():
 
     cursor = conn.cursor()
 
+    # TABLA FOTOS
     cursor.execute("""
 
         CREATE TABLE IF NOT EXISTS fotos (
@@ -57,11 +59,57 @@ def iniciar_db():
 
     """)
 
+    # CONFIGURACION
+    cursor.execute("""
+
+        CREATE TABLE IF NOT EXISTS config (
+
+            id INTEGER PRIMARY KEY,
+
+            uploads_habilitados INTEGER
+
+        )
+
+    """)
+
+    cursor.execute(
+        """
+        INSERT OR IGNORE INTO config
+        (id, uploads_habilitados)
+        VALUES (1, 0)
+        """
+    )
+
     conn.commit()
     conn.close()
 
 
 iniciar_db()
+
+
+# =====================================
+# CONFIG FUNCTIONS
+# =====================================
+
+def uploads_habilitados():
+
+    conn = sqlite3.connect(DB_NAME)
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT uploads_habilitados
+        FROM config
+        WHERE id = 1
+        """
+    )
+
+    valor = cursor.fetchone()[0]
+
+    conn.close()
+
+    return valor == 1
 
 
 # =====================================
@@ -269,6 +317,7 @@ button{
     padding:10px;
     border:none;
     border-radius:10px;
+    cursor:pointer;
 }
 
 img{
@@ -276,11 +325,18 @@ img{
     border-radius:10px;
 }
 
+.info{
+    padding:10px;
+    background:#222;
+}
+
 </style>
 
 </head>
 
 <body>
+
+{% if uploads %}
 
 <form method="POST"
       action="/upload"
@@ -298,6 +354,14 @@ img{
     </button>
 
 </form>
+
+{% else %}
+
+<div class="info">
+    Uploads deshabilitados
+</div>
+
+{% endif %}
 
 <div id="map"></div>
 
@@ -322,16 +386,16 @@ L.tileLayer(
 ).addTo(mapa);
 
 
-// ============================
+// =====================================
 // CLUSTER
-// ============================
+// =====================================
 
 let cluster = L.markerClusterGroup();
 
 
-// ============================
+// =====================================
 // MARKERS
-// ============================
+// =====================================
 
 for(let foto of fotos){
 
@@ -346,6 +410,16 @@ for(let foto of fotos){
         <br><br>
 
         <img src="/imagen/${foto.nombre}">
+
+        <br><br>
+
+        <a href="/eliminar/${foto.nombre}?password=1234">
+
+            <button>
+                Eliminar
+            </button>
+
+        </a>
         `
     );
 
@@ -373,12 +447,16 @@ def inicio():
 
     return render_template_string(
         HTML,
-        fotos=json.dumps(fotos)
+        fotos=json.dumps(fotos),
+        uploads=uploads_habilitados()
     )
 
 
 @app.route("/upload", methods=["POST"])
 def upload():
+
+    if not uploads_habilitados():
+        return "Uploads deshabilitados"
 
     if "fotos" not in request.files:
         return redirect("/")
@@ -404,7 +482,7 @@ def upload():
 
         archivo.save(ruta_temp)
 
-        # Comprimir
+        # COMPRIME
         comprimir_imagen(ruta_temp)
 
         gps = obtener_gps(ruta_temp)
@@ -418,7 +496,7 @@ def upload():
                 ruta_temp
             )
 
-        # Elimina temporal
+        # ELIMINA TEMP
         if os.path.exists(ruta_temp):
             os.remove(ruta_temp)
 
@@ -453,6 +531,71 @@ def imagen(nombre):
     return imagen_binaria, 200, {
         "Content-Type": "image/jpeg"
     }
+
+
+@app.route("/eliminar/<nombre>")
+def eliminar(nombre):
+
+    password = request.args.get("password")
+
+    if password != ADMIN_PASSWORD:
+        return "Contraseña incorrecta"
+
+    conn = sqlite3.connect(DB_NAME)
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM fotos
+        WHERE nombre = ?
+        """,
+        (nombre,)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return redirect("/")
+
+
+@app.route("/toggle_uploads")
+def toggle_uploads():
+
+    password = request.args.get("password")
+
+    if password != ADMIN_PASSWORD:
+        return "Contraseña incorrecta"
+
+    conn = sqlite3.connect(DB_NAME)
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT uploads_habilitados
+        FROM config
+        WHERE id = 1
+        """
+    )
+
+    estado = cursor.fetchone()[0]
+
+    nuevo_estado = 0 if estado == 1 else 1
+
+    cursor.execute(
+        """
+        UPDATE config
+        SET uploads_habilitados = ?
+        WHERE id = 1
+        """,
+        (nuevo_estado,)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return f"Uploads habilitados: {nuevo_estado}"
 
 
 # =====================================
