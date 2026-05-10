@@ -371,59 +371,90 @@ def inicio():
     )
 
 
+import traceback
+import time
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
 
-    if "fotos" not in request.files:
-        return redirect("/")
+    try:
 
-    archivos = request.files.getlist("fotos")
+        print("INICIO UPLOAD")
 
-    if len(archivos) > 5:
-        return "Máximo 5 fotos"
+        if "fotos" not in request.files:
+            print("NO HAY ARCHIVOS")
+            return redirect("/")
 
-    for archivo in archivos:
+        archivos = request.files.getlist("fotos")
 
-        if archivo.filename == "":
-            continue
+        print("CANTIDAD:", len(archivos))
 
-        nombre = secure_filename(
-            archivo.filename
-        )
+        for archivo in archivos:
 
-        ruta_temp = os.path.join(
-            TEMP_FOLDER,
-            nombre
-        )
+            print("PROCESANDO")
 
-        archivo.save(ruta_temp)
+            if archivo.filename == "":
+                print("VACIO")
+                continue
 
-        # LEER GPS PRIMERO
-        gps = obtener_gps(ruta_temp)
-
-        if gps:
-
-            print("GPS:", nombre)
-
-            # COMPRIMIR DESPUES
-            comprimir_imagen(ruta_temp)
-
-            guardar_foto_supabase(
-                nombre,
-                gps["lat"],
-                gps["lon"],
-                ruta_temp
+            nombre = (
+                str(int(time.time()))
+                + "_"
+                + secure_filename(archivo.filename)
             )
 
-        else:
+            print("NOMBRE:", nombre)
 
-            print("SIN GPS:", nombre)
+            ruta_temp = os.path.join(
+                TEMP_FOLDER,
+                nombre
+            )
 
-        # ELIMINA TEMP
-        if os.path.exists(ruta_temp):
-            os.remove(ruta_temp)
+            archivo.save(ruta_temp)
 
-    return redirect("/")
+            print("GUARDADO TEMP")
+
+            gps = obtener_gps(ruta_temp)
+
+            print("GPS:", gps)
+
+            if gps:
+
+                comprimir_imagen(ruta_temp)
+
+                print("COMPRESION OK")
+
+                guardar_foto_supabase(
+                    nombre,
+                    gps["lat"],
+                    gps["lon"],
+                    ruta_temp
+                )
+
+                print("SUPABASE OK")
+
+            else:
+
+                print("SIN GPS")
+
+            if os.path.exists(ruta_temp):
+                os.remove(ruta_temp)
+
+                print("TEMP ELIMINADO")
+
+        print("UPLOAD TERMINADO")
+
+        return redirect("/")
+
+    except Exception as e:
+
+        print("ERROR CRITICO:")
+        print(str(e))
+
+        traceback.print_exc()
+
+        return f"ERROR: {e}"
 
 
 @app.route("/eliminar/<nombre>")
