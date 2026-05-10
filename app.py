@@ -23,13 +23,13 @@ import io
 
 app = Flask(__name__)
 
-SUPABASE_URL = "TU_SUPABASE_URL"
+SUPABASE_URL = "https://hibosiwdcybnkkjvaxzt.supabase.co"
 
-SUPABASE_KEY = "TU_SUPABASE_ANON_KEY"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpYm9zaXdkY3libmtranZheHp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgzODQ1MDEsImV4cCI6MjA5Mzk2MDUwMX0.XRNkxB4ym71V43mYnWsQrlyDHH5TZtvlGKx9ResZKt0"
 
 BUCKET = "fotos"
 
-ADMIN_PASSWORD = "1234"
+ADMIN_PASSWORD = "@Demferzu2002"
 
 TEMP_FOLDER = "temp"
 
